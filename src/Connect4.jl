@@ -13,6 +13,7 @@ mutable struct GameData
     players::UInt8
     fills::Matrix{Int8}
     peer::String
+    turn::Bool
 end
 
 GAMES = Dict{String, GameData}()
@@ -66,7 +67,7 @@ function games_list(c::Toolips.AbstractConnection)
         on(c, confirm_butt, "click") do cm::ComponentModifier
             game_name = cm["name-input"]["text"]
             fills = hcat([[0 for y in 1:6] for x in 1:7] ...)
-            new_game_data = GameData(get_ip(c), UInt8(1), fills, "")
+            new_game_data = GameData(get_ip(c), UInt8(1), fills, "", true)
             push!(GAMES, game_name => new_game_data)
             redirect!(cm, "/game")
         end
@@ -100,11 +101,11 @@ main = route("/") do c::Toolips.AbstractConnection
 end
 
 get_game(ip::String) = begin
-    f = findfirst(gameinfo -> gameinfo[2].ip == ip, GAMES)
+    f = findfirst(gameinfo -> gameinfo.ip == ip, GAMES)
     if ~(isnothing(f))
         return(GAMES[f], true)
     end
-    f = findfirst(gameinfo -> gameinfo[2].peer == ip, GAMES)
+    f = findfirst(gameinfo -> gameinfo.peer == ip, GAMES)
     if ~(isnothing(f))
         return(GAMES[f], false)
     end
@@ -121,14 +122,83 @@ game = route("/game") do c::Toolips.AbstractConnection
         write!(c, scr)
         return
     end
+    if is_host
+        open_rpc!(c)
+    else
+        join_rpc!(c, gameinfo.ip)
+    end
     build_game(c, gameinfo, is_host)
 end
 
 function build_game(c, gameinfo, is_host)
-    
-    [begin
-
-    end for col in eachcol(gameinfo.fills)]
+    connect_container = div("connect-main")
+    over_container = svg("connect-over")
+    turn_indicator = div("turn-indicator")
+    if gameinfo.turn && ~(is_host)
+        turn_indicator[:text] = "host's turn"
+    elseif gameinfo.turn && is_host
+        turn_indicator[:text] = "your turn"
+    elseif ~(gameinfo.turn) && ~(is_host)
+        turn_indicator[:text] = "your turn"
+    elseif ~(gameinfo.turn) && is_host
+        turn_indicator[:text] = "challenger's turn"
+    end
+    common = ("position" => "absolute", "top" => 4percent)
+    style!(connect_container, "background-color" => "darkblue", "height" => 75percent, "padding" => 5percent,
+    "width" => 90percent, "left" => 0percent, "position" => "absolute", "top" => 3.7percent)
+    style!(over_container, "background-color" => "transparent", "height" => 78percent, "top" => 3.5percent, "width" => 75percent, 
+    "left" => 5percent, common ...)
+    n = size(gameinfo.fills)
+    xpercentage = 70 / n[2]
+    ypercentage = 80 / n[1]
+    color = "darkred"
+    if is_host
+        color = "#9b870c"
+    end
+    placement_previews = [begin 
+        cx_value = (xpercentage * e + 15) * percent
+        circ = Component{:circle}("active_circ$e", cx = cx_value, cy = 6percent, r = 40)
+        style!(circ, "fill" => color, "opacity" => 10percent, "cursor" => "pointer", "transition" => 750ms)
+        on(c, circ, "dblclick") do cm
+            full_col = findlast(n -> n == 0, gameinfo.fills[:, e])
+            if isnothing(full_col)
+                alert!(cm, "that column is full")
+                return
+            end
+            gameinfo.fills[full_col, e] = 1
+            style!(cm, "circ-$e-$full_col", "fill" => color)
+        end
+        on(c, circ, "mouseenter") do cm::ComponentModifier
+            style!(cm, circ, "opacity" => 100percent)
+            rpc!(c, cm)
+        end
+        on(c, circ, "mouseleave") do cm::ComponentModifier
+            style!(cm, circ, "opacity" => 10percent)
+            rpc!(c, cm)
+        end
+        circ
+    end for e in 1:n[2]]
+    set_children!(over_container, placement_previews)
+    circles = vcat([begin 
+        [begin 
+            circ = Component{:circle}("circ-$column_n-$row_n", r = 40, cx = (xpercentage * column_n + 15) * percent, 
+            cy = (ypercentage * row_n + 20) * percent)
+            if fillvalue == 0
+                style!(circ, "fill" => "white")
+            elseif fillvalue == 1
+                style!(circ, "fill" => "#9b870c")
+            elseif fillvalue == 2
+                style!(circ, "fill" => "darkred")
+            end
+            circ
+        end for (row_n, fillvalue) in enumerate(fillcolumn)]
+    end for (column_n, fillcolumn) in enumerate(eachcol(gameinfo.fills))] ...)
+    main_vector = svg("main-svg", width = 100percent, height = 100percent, children = circles)
+    style!(main_vector, "background-color" => "lightblue", "border-radius" => 3px, "width" => 75percent, 
+    "left" => 5percent, "pointer-events" => "none", common ...)
+    push!(connect_container, main_vector, over_container)
+    mainbody = body(children = [turn_indicator, connect_container])
+    write!(c, mainbody)
 end
 
 
