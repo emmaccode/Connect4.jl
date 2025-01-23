@@ -112,6 +112,17 @@ get_game(ip::String) = begin
     return(nothing, false)
 end
 
+clear_game!(ip::String) = begin
+    f = findfirst(gameinfo -> gameinfo.ip == ip, GAMES)
+    if ~(isnothing(f))
+        delete!(game, f)
+    end
+    f = findfirst(gameinfo -> gameinfo.peer == ip, GAMES)
+    if ~(isnothing(f))
+        delete!(game, f)
+    end
+end
+
 game = route("/game") do c::Toolips.AbstractConnection
     ip::String = get_ip(c)
     gameinfo, is_host::Bool = get_game(ip)
@@ -134,6 +145,12 @@ function build_game(c, gameinfo, is_host)
     connect_container = div("connect-main")
     over_container = svg("connect-over")
     turn_indicator = div("turn-indicator")
+    style!(turn_indicator, "background-color" => "white", "border-radius" => 6px, "color" => "darkblue", 
+    "font-weight" => "bold", "font-size" => 17pt, "padding" => 5px, "border" => "2px solid #dddddd")
+    num = 1
+    if ~(is_host)
+        num = 2
+    end
     if gameinfo.turn && ~(is_host)
         turn_indicator[:text] = "host's turn"
     elseif gameinfo.turn && is_host
@@ -143,10 +160,10 @@ function build_game(c, gameinfo, is_host)
     elseif ~(gameinfo.turn) && is_host
         turn_indicator[:text] = "challenger's turn"
     end
-    common = ("position" => "absolute", "top" => 4percent)
+    common = ("position" => "absolute", "cdcscd" => "null")
     style!(connect_container, "background-color" => "darkblue", "height" => 75percent, "padding" => 5percent,
-    "width" => 90percent, "left" => 0percent, "position" => "absolute", "top" => 3.7percent)
-    style!(over_container, "background-color" => "transparent", "height" => 78percent, "top" => 3.5percent, "width" => 75percent, 
+    "width" => 90percent, "left" => 0percent, "position" => "absolute", "top" => 5percent)
+    style!(over_container, "background-color" => "transparent", "height" => 78percent, "top" => 0.2percent, "width" => 75percent, 
     "left" => 5percent, common ...)
     n = size(gameinfo.fills)
     xpercentage = 70 / n[2]
@@ -156,7 +173,7 @@ function build_game(c, gameinfo, is_host)
         color = "#9b870c"
     end
     placement_previews = [begin 
-        cx_value = (xpercentage * e + 15) * percent
+        cx_value = (xpercentage * e + 10) * percent
         circ = Component{:circle}("active_circ$e", cx = cx_value, cy = 6percent, r = 40)
         style!(circ, "fill" => color, "opacity" => 10percent, "cursor" => "pointer", "transition" => 750ms)
         on(c, circ, "dblclick") do cm
@@ -165,8 +182,37 @@ function build_game(c, gameinfo, is_host)
                 alert!(cm, "that column is full")
                 return
             end
-            gameinfo.fills[full_col, e] = 1
+            gameinfo.fills[full_col, e] = num
+            four_match = find_four_in_a_row(gameinfo.fills, num)
             style!(cm, "circ-$e-$full_col", "fill" => color)
+            if length(four_match) > 0
+                name = "host"
+                if num == 2
+                    name = "client"
+                end
+                [begin 
+                    style!(cm, "circ-$(match[2])-$(match[1])", "stroke" => "darkgreen", "stroke-width" => 4px)
+                end for match in four_match[1]]
+                popupbox = div("popupbox", text = "$name wins!", align = "center")
+                style!(popupbox, "background-color" => color, "color" => "#dd3ddd", "width" => 10percent, 
+                "top" => 40percent, "height" => 500px, "padding" => 3percent, "left" => 90percent, "font-size" => 22pt, 
+                "z-index" => 20)
+                append!(cm, "main-bod", popupbox)
+                on(cm, 3000) do cl::ClientModifier
+                    redirect!(cl, "/")
+                end
+                rpc!(c, cm)
+                clear_game!(get_ip(c))
+                return
+            end
+            rpc!(c, cm)
+            gameinfo.turn = ~gameinfo.turn
+            call!(c, cm) do cm2::ComponentModifier
+                set_text!(cm2, "turn-indicator", "your turn")
+                style!(cm2, "connect-over", "pointer-events" => "auto")
+            end
+            style!(cm, "connect-over", "pointer-events" => "none")
+            set_text!(cm, "turn-indicator", "opponent's turn")
         end
         on(c, circ, "mouseenter") do cm::ComponentModifier
             style!(cm, circ, "opacity" => 100percent)
@@ -181,8 +227,8 @@ function build_game(c, gameinfo, is_host)
     set_children!(over_container, placement_previews)
     circles = vcat([begin 
         [begin 
-            circ = Component{:circle}("circ-$column_n-$row_n", r = 40, cx = (xpercentage * column_n + 15) * percent, 
-            cy = (ypercentage * row_n + 20) * percent)
+            circ = Component{:circle}("circ-$column_n-$row_n", r = 40, cx = (xpercentage * column_n + 10) * percent, 
+            cy = (ypercentage * row_n + 5) * percent)
             if fillvalue == 0
                 style!(circ, "fill" => "white")
             elseif fillvalue == 1
@@ -193,13 +239,47 @@ function build_game(c, gameinfo, is_host)
             circ
         end for (row_n, fillvalue) in enumerate(fillcolumn)]
     end for (column_n, fillcolumn) in enumerate(eachcol(gameinfo.fills))] ...)
-    main_vector = svg("main-svg", width = 100percent, height = 100percent, children = circles)
+    main_vector = svg("main-svg", width = 100percent, height = 90percent, children = circles)
     style!(main_vector, "background-color" => "lightblue", "border-radius" => 3px, "width" => 75percent, 
-    "left" => 5percent, "pointer-events" => "none", common ...)
+    "left" => 5percent, "pointer-events" => "none", "top" => 0percent, common ...)
     push!(connect_container, main_vector, over_container)
-    mainbody = body(children = [turn_indicator, connect_container])
+    mainbody = body("main-bod", children = [turn_indicator, connect_container])
+    style!(mainbody, "background-color" => "darkblue")
     write!(c, mainbody)
 end
+
+function find_four_in_a_row(matrix::Array{<:Integer, 2}, target::Integer)
+    rows, cols = size(matrix)
+
+    # Define the directions: (row increment, column increment)
+    directions = [
+        (0, 1),   # Horizontal
+        (1, 0),   # Vertical
+        (1, 1),   # Diagonal (top-left to bottom-right)
+        (1, -1)   # Diagonal (top-right to bottom-left)
+    ]
+
+    # To store the indices of the found sequences
+    sequences = Vector{Vector{Tuple{Int, Int}}}()
+
+    for r in 1:rows
+        for c in 1:cols
+            for (dr, dc) in directions
+                # Check if 4 in a row is possible in this direction
+                if r + 3 * dr <= rows && r + 3 * dr >= 1 && c + 3 * dc <= cols && c + 3 * dc >= 1
+                    if all(matrix[r + i * dr, c + i * dc] == target for i in 0:3)
+                        # Collect the indices of the matching sequence
+                        indices = [(r + i * dr, c + i * dc) for i in 0:3]
+                        push!(sequences, indices)
+                    end
+                end
+            end
+        end
+    end
+
+    return sequences
+end
+
 
 
 export main, default_404, logger, SESSION, game
